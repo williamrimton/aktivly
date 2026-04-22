@@ -1,0 +1,1 @@
+ALTER TABLE public.participants ADD COLUMN reason text;

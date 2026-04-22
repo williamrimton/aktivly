@@ -1,0 +1,2 @@
+ALTER TABLE public.participants DROP CONSTRAINT participants_status_check;
+ALTER TABLE public.participants ADD CONSTRAINT participants_status_check CHECK (status = ANY (ARRAY['confirmed'::text, 'pending'::text, 'declined'::text, 'waitlist'::text, 'maybe'::text]));
