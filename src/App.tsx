@@ -14,6 +14,7 @@ import ActivityDetail from "./pages/ActivityDetail.tsx";
 import MyBookings from "./pages/MyBookings.tsx";
 import ParticipantBooking from "./pages/ParticipantBooking.tsx";
 import Profile from "./pages/Profile.tsx";
+import ConfirmEmail from "./pages/ConfirmEmail.tsx";
 import NotFound from "./pages/NotFound.tsx";
 
 const queryClient = new QueryClient();
@@ -30,6 +31,7 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
+            <Route path="/confirm-email" element={<ConfirmEmail />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/create" element={<CreateActivity />} />
             <Route path="/activity/:id" element={<ActivityDetail />} />

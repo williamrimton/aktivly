@@ -27,7 +27,7 @@ const Signup = () => {
       toast.error(error.message);
     } else {
       toast.success("Konto skapat! Kolla din e-post för att bekräfta.");
-      navigate(redirectTo);
+      navigate("/confirm-email");
     }
   };
 

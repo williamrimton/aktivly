@@ -5,6 +5,8 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Menu, X, LogOut, LayoutDashboard } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import aktivlyIcon from "@/assets/aktivlySVG.svg";
 
 const Navbar = () => {
@@ -13,8 +15,18 @@ const Navbar = () => {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const userInitials = user?.email?.slice(0, 2).toUpperCase() ?? "?";
-  const displayName = user?.user_metadata?.full_name || user?.email?.split("@")[0] || "";
+  const { data: profile } = useQuery({
+    queryKey: ["profile", user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("profiles").select("*").eq("user_id", user!.id).single();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!user,
+  });
+
+  const displayName = profile?.display_name || user?.email?.split("@")[0] || "";
+  const userInitials = displayName.slice(0, 2).toUpperCase() || user?.email?.slice(0, 2).toUpperCase() || "?";
 
   const scrollToSection = (sectionId: string) => {
     setMobileOpen(false);

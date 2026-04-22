@@ -52,8 +52,14 @@ const Profile = () => {
       if (error) throw error;
     },
     onSuccess: () => {
+      queryClient.setQueryData(["profile", user?.id], (old: any) => ({
+        ...old,
+        display_name: displayName || null,
+        email: email || null,
+        phone: phone || null,
+      }));
       toast.success("Profil uppdaterad!");
-      queryClient.invalidateQueries({ queryKey: ["profile", user?.id] });
+      navigate("/dashboard");
     },
     onError: (err: any) => toast.error(err.message),
   });
