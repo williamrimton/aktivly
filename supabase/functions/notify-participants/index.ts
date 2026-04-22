@@ -3,18 +3,9 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const GATEWAY_URL = 'https://connector-gateway.lovable.dev/resend'
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
-  }
-
-  const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY')
-  if (!LOVABLE_API_KEY) {
-    return new Response(JSON.stringify({ error: 'LOVABLE_API_KEY is not configured' }), {
-      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
   }
 
   const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')
@@ -39,6 +30,7 @@ Deno.serve(async (req) => {
       })
     }
 
+    const baseUrl = siteUrl || Deno.env.get('SITE_URL') || 'https://aktivly.se'
     const results = []
 
     for (const p of participants) {
@@ -53,7 +45,7 @@ Deno.serve(async (req) => {
           <p style="color: #555; font-size: 16px; line-height: 1.5;">
             Logga in på Aktivly för att se detaljer och svara på inbjudan.
           </p>
-          <a href="${siteUrl || 'https://aktivly.lovable.app'}/login" 
+          <a href="${baseUrl}/login"
              style="display: inline-block; background: #6366f1; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; margin-top: 16px;">
             Logga in och svara
           </a>
@@ -63,12 +55,11 @@ Deno.serve(async (req) => {
         </div>
       `
 
-      const response = await fetch(`${GATEWAY_URL}/emails`, {
+      const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-          'X-Connection-Api-Key': RESEND_API_KEY,
+          'Authorization': `Bearer ${RESEND_API_KEY}`,
         },
         body: JSON.stringify({
           from: 'Aktivly <onboarding@resend.dev>',
