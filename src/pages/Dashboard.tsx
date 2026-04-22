@@ -2,11 +2,12 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, Calendar, Users, BarChart3, LogOut, Filter, Repeat, Mail, UserCheck } from "lucide-react";
+import { Plus, Search, Calendar, Users, BarChart3, LogOut, Filter, Repeat, Mail, UserCheck, Send } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { toast } from "sonner";
 
 const statusConfig: Record<string, { label: string; className: string }> = {
   confirmed: { label: "Bekräftad", className: "bg-success/10 text-success" },
@@ -19,8 +20,13 @@ const statusConfig: Record<string, { label: string; className: string }> = {
 const Dashboard = () => {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "upcoming" | "full">("all");
+  const [inviteSentAt, setInviteSentAt] = useState<Record<string, number>>(() => {
+    try { return JSON.parse(localStorage.getItem("inv_sent") || "{}"); } catch { return {}; }
+  });
+  const [sendingId, setSendingId] = useState<string | null>(null);
 
   const { data: activities = [], isLoading } = useQuery({
     queryKey: ["activities", user?.id],
@@ -61,6 +67,130 @@ const Dashboard = () => {
     enabled: !!user,
   });
 
+  const isCoolingDown = (activityId: string) => {
+    const sentAt = inviteSentAt[activityId];
+    if (!sentAt) return false;
+    return Date.now() - sentAt < 10 * 60 * 1000;
+  };
+
+  const forceSendMutation = useMutation({
+    mutationFn: async (event: any) => {
+      const nextDate = getNextOccurrence(event);
+      if (!nextDate) throw new Error("Ingen kommande förekomst hittades");
+      const dateStr = formatDate(nextDate);
+
+      // Check if child event already exists for this date
+      const { data: existing } = await supabase
+        .from("activities")
+        .select("id")
+        .eq("parent_activity_id", event.id)
+        .eq("date", dateStr)
+        .maybeSingle();
+
+      let childId: string;
+
+      if (!existing) {
+        const { data: newEvent, error } = await supabase
+          .from("activities")
+          .insert({
+            user_id: event.user_id,
+            title: event.title,
+            description: event.description,
+            date: dateStr,
+            time: event.time,
+            location: event.location,
+            max_participants: event.max_participants,
+            is_recurring: false,
+            parent_activity_id: event.id,
+          })
+          .select("id")
+          .single();
+        if (error) throw error;
+        childId = newEvent.id;
+
+        // Copy invitees as participants on the new child event
+        const { data: invitees } = await supabase
+          .from("activity_invitees")
+          .select("*")
+          .eq("activity_id", event.id);
+        if (invitees && invitees.length > 0) {
+          await supabase.from("participants").insert(
+            invitees.map((inv: any) => ({
+              activity_id: childId,
+              name: inv.name,
+              email: inv.email,
+              status: "pending",
+            }))
+          );
+        }
+      } else {
+        childId = existing.id;
+      }
+
+      // Send email invitations
+      const { data: invitees } = await supabase
+        .from("activity_invitees")
+        .select("name, email")
+        .eq("activity_id", event.id);
+      if (invitees && invitees.length > 0) {
+        await supabase.functions.invoke("notify-participants", {
+          body: {
+            participants: invitees,
+            activityTitle: `${event.title} – ${dateStr}`,
+            siteUrl: window.location.origin,
+          },
+        });
+      }
+
+      return event.id;
+    },
+    onSuccess: (activityId: string) => {
+      const updated = { ...inviteSentAt, [activityId]: Date.now() };
+      setInviteSentAt(updated);
+      localStorage.setItem("inv_sent", JSON.stringify(updated));
+      setSendingId(null);
+      toast.success("Inbjudan skickad!");
+      queryClient.invalidateQueries({ queryKey: ["activities", user?.id] });
+    },
+    onError: (err: any) => {
+      setSendingId(null);
+      toast.error(err.message || "Kunde inte skicka inbjudan");
+    },
+  });
+
+  const reminderMutation = useMutation({
+    mutationFn: async ({ childId, parentId, eventTitle, dateStr }: { childId: string; parentId: string; eventTitle: string; dateStr: string }) => {
+      const { data: pending, error } = await supabase
+        .from("participants")
+        .select("name, email")
+        .eq("activity_id", childId)
+        .eq("status", "pending")
+        .not("email", "is", null);
+      if (error) throw error;
+      if (!pending || pending.length === 0) throw new Error("Alla deltagare har redan svarat");
+      await supabase.functions.invoke("notify-participants", {
+        body: {
+          participants: pending,
+          activityTitle: `${eventTitle} – ${dateStr}`,
+          siteUrl: window.location.origin,
+        },
+      });
+      return parentId;
+    },
+    onSuccess: (parentId: string) => {
+      const updated = { ...inviteSentAt, [parentId]: Date.now() };
+      setInviteSentAt(updated);
+      localStorage.setItem("inv_sent", JSON.stringify(updated));
+      setSendingId(null);
+      toast.success("Påminnelse skickad!");
+      queryClient.invalidateQueries({ queryKey: ["activities", user?.id] });
+    },
+    onError: (err: any) => {
+      setSendingId(null);
+      toast.error(err.message || "Kunde inte skicka påminnelse");
+    },
+  });
+
   const handleSignOut = async () => {
     await signOut();
     navigate("/");
@@ -79,7 +209,13 @@ const Dashboard = () => {
   // Actual scheduled events = standalone + child events (not recurring templates)
   const scheduledEvents = [...oneTimeActivities, ...childActivities];
 
-  const filtered = oneTimeActivities.filter(e => {
+  const ownedIds = new Set([...oneTimeActivities, ...childActivities].map(e => e.id));
+  const confirmedParticipated = participatedActivities
+    .filter((e: any) => !e.is_recurring && !ownedIds.has(e.id))
+    .filter((e: any) => e.participants?.find((p: any) => p.user_id === user?.id)?.status === "confirmed")
+    .map((e: any) => ({ ...e, confirmed: e.participants?.filter((p: any) => p.status === "confirmed").length ?? 0, total: e.participants?.length ?? 0 }));
+
+  const filtered = [...oneTimeActivities, ...childActivities, ...confirmedParticipated].filter(e => {
     if (filter === "full" && e.max_participants && e.confirmed < e.max_participants) return false;
     if (filter === "upcoming" && e.max_participants && e.confirmed >= e.max_participants) return false;
     return e.title.toLowerCase().includes(search.toLowerCase());
@@ -229,7 +365,7 @@ const Dashboard = () => {
             </TabsTrigger>
             <TabsTrigger value="invited">
               <UserCheck className="h-4 w-4 mr-1.5" />
-              Inbjuden till ({participatedActivities.length})
+              Inbjuden till ({participatedActivities.filter((e: any) => !e.is_recurring).length})
             </TabsTrigger>
           </TabsList>
 
@@ -287,6 +423,12 @@ const Dashboard = () => {
                   now.setHours(0, 0, 0, 0);
                   const invitationSent = invitationDate ? invitationDate <= now : false;
 
+                  const nextDateStr = nextOccurrence ? formatDate(nextOccurrence) : null;
+                  const existingChild = nextDateStr
+                    ? childActivities.find(c => (c as any).parent_activity_id === event.id && c.date === nextDateStr)
+                    : null;
+                  const cooling = isCoolingDown(event.id);
+
                   return (
                     <Link
                       key={event.id}
@@ -335,6 +477,27 @@ const Dashboard = () => {
                         <p className="text-xs text-muted-foreground">Slutar: {event.recurrence_end_date}</p>
                       )}
 
+                      {nextOccurrence && !existingChild && (
+                        <div className="pt-1" onClick={e => e.preventDefault()}>
+                          {cooling ? (
+                            <Button variant="outline" size="sm" disabled className="w-full text-success border-success/30">
+                              <Mail className="h-3.5 w-3.5 mr-1.5" />
+                              Inbjudan skickad ✓
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              className="w-full gradient-primary text-primary-foreground border-0"
+                              disabled={sendingId === event.id}
+                              onClick={e => { e.preventDefault(); e.stopPropagation(); setSendingId(event.id); forceSendMutation.mutate(event); }}
+                            >
+                              <Send className="h-3.5 w-3.5 mr-1.5" />
+                              {sendingId === event.id ? "Skickar..." : "Skicka inbjudan nu"}
+                            </Button>
+                          )}
+                        </div>
+                      )}
+
                       {/* Show child events */}
                       {childActivities.filter(c => (c as any).parent_activity_id === event.id).length > 0 && (
                         <div className="border-t border-border pt-3 mt-2">
@@ -371,14 +534,14 @@ const Dashboard = () => {
           <TabsContent value="invited" className="space-y-6">
             {isLoadingParticipated ? (
               <div className="text-center py-12 text-muted-foreground">Laddar...</div>
-            ) : participatedActivities.length === 0 ? (
+            ) : participatedActivities.filter((e: any) => !e.is_recurring).length === 0 ? (
               <div className="text-center py-16 space-y-4">
                 <UserCheck className="h-12 w-12 text-muted-foreground/30 mx-auto" />
                 <p className="text-muted-foreground">Du har inte blivit tillagd på några aktiviteter ännu</p>
               </div>
             ) : (
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {participatedActivities.map((event: any, i: number) => {
+                {participatedActivities.filter((event: any) => !event.is_recurring).map((event: any, i: number) => {
                   const myParticipant = event.participants?.find((p: any) => p.user_id === user?.id);
                   const confirmedCount = event.participants?.filter((p: any) => p.status === "confirmed").length ?? 0;
                   const enrichedEvent = { ...event, confirmed: confirmedCount, total: event.participants?.length ?? 0 };

@@ -13,8 +13,9 @@ const MyBookings = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("participants")
-        .select("*, activities(*)")
+        .select("*, activities!inner(*)")
         .eq("user_id", user!.id)
+        .eq("activities.is_recurring", false)
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data;

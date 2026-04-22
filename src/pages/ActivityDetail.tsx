@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { TimeInput24h } from "@/components/ui/time-input-24h";
-import { ArrowLeft, Calendar, MapPin, Users, Clock, Share2, Pencil, Trash2, X, Save, Search, UserPlus } from "lucide-react";
+import { ArrowLeft, Calendar, MapPin, Users, Clock, Share2, Pencil, Trash2, X, Save, Search, UserPlus, Bell } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -41,6 +41,11 @@ const ActivityDetail = () => {
   const [emailError, setEmailError] = useState("");
   const [emailLoading, setEmailLoading] = useState(false);
   const [showAddUser, setShowAddUser] = useState(false);
+  const [rsvpReason, setRsvpReason] = useState("");
+  const [reminderSentAt, setReminderSentAt] = useState<number | null>(() => {
+    try { return JSON.parse(localStorage.getItem(`reminder_sent_${id}`) || "null"); } catch { return null; }
+  });
+  const reminderCoolingDown = reminderSentAt !== null && Date.now() - reminderSentAt < 10 * 60 * 1000;
 
   const { data: activity, isLoading } = useQuery({
     queryKey: ["activity", id],
@@ -189,6 +194,24 @@ const ActivityDetail = () => {
     onError: (err: any) => toast.error(err.message),
   });
 
+  const rsvpMutation = useMutation({
+    mutationFn: async (status: string) => {
+      const myParticipant = activity?.participants?.find((p: any) => p.user_id === user?.id);
+      if (!myParticipant) return;
+      const { error } = await supabase
+        .from("participants")
+        .update({ status, reason: rsvpReason.trim() || null })
+        .eq("id", myParticipant.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Ditt svar har sparats!");
+      queryClient.invalidateQueries({ queryKey: ["activity", id] });
+      queryClient.invalidateQueries({ queryKey: ["participated-activities", user?.id] });
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
   const deleteActivityMutation = useMutation({
     mutationFn: async () => {
       const { error } = await supabase.from("activities").delete().eq("id", id!);
@@ -200,6 +223,40 @@ const ActivityDetail = () => {
     },
     onError: (err: any) => toast.error(err.message),
   });
+
+  const sendReminderMutation = useMutation({
+    mutationFn: async () => {
+      const { data: pending, error } = await supabase
+        .from("participants")
+        .select("name, email")
+        .eq("activity_id", id!)
+        .eq("status", "pending")
+        .not("email", "is", null);
+      if (error) throw error;
+      if (!pending || pending.length === 0) throw new Error("Alla deltagare har redan svarat");
+      await supabase.functions.invoke("notify-participants", {
+        body: {
+          participants: pending,
+          activityTitle: activity?.title,
+          siteUrl: window.location.origin,
+        },
+      });
+    },
+    onSuccess: () => {
+      const now = Date.now();
+      setReminderSentAt(now);
+      localStorage.setItem(`reminder_sent_${id}`, JSON.stringify(now));
+      toast.success("Påminnelse skickad till ej svarade!");
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  useEffect(() => {
+    if (activity && user) {
+      const me = activity.participants?.find((p: any) => p.user_id === user.id);
+      if (me?.reason) setRsvpReason(me.reason);
+    }
+  }, [activity?.id]);
 
   const startEditing = () => {
     if (!activity) return;
@@ -219,6 +276,7 @@ const ActivityDetail = () => {
 
   const confirmed = activity.participants?.filter((p: any) => p.status === "confirmed").length ?? 0;
   const isOwner = activity.user_id === user?.id;
+  const myParticipant = activity.participants?.find((p: any) => p.user_id === user?.id);
 
   return (
     <div className="min-h-screen bg-surface">
@@ -346,6 +404,51 @@ const ActivityDetail = () => {
           </div>
         )}
 
+        {/* RSVP for invited participants */}
+        {!activity.is_recurring && myParticipant && (
+          <div className="bg-card rounded-2xl border border-border p-6 space-y-4 animate-fade-in">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-foreground">Ditt svar</h3>
+              <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${statusConfig[myParticipant.status]?.className ?? "bg-warning/10 text-warning"}`}>
+                {statusConfig[myParticipant.status]?.label ?? "Inväntar svar"}
+              </span>
+            </div>
+            <Textarea
+              placeholder="Lägg till en kommentar (valfritt)..."
+              value={rsvpReason}
+              onChange={e => setRsvpReason(e.target.value)}
+              rows={2}
+              className="resize-none"
+            />
+            <div className="flex gap-3">
+              <Button
+                variant={myParticipant.status === "confirmed" ? "default" : "outline"}
+                onClick={() => rsvpMutation.mutate("confirmed")}
+                disabled={rsvpMutation.isPending}
+                className={`flex-1 ${myParticipant.status === "confirmed" ? "gradient-primary text-primary-foreground border-0" : ""}`}
+              >
+                Jag kommer
+              </Button>
+              <Button
+                variant={myParticipant.status === "maybe" ? "default" : "outline"}
+                onClick={() => rsvpMutation.mutate("maybe")}
+                disabled={rsvpMutation.isPending}
+                className={`flex-1 ${myParticipant.status === "maybe" ? "gradient-primary text-primary-foreground border-0" : ""}`}
+              >
+                Kanske
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => rsvpMutation.mutate("declined")}
+                disabled={rsvpMutation.isPending}
+                className={`flex-1 ${myParticipant.status === "declined" ? "bg-destructive text-destructive-foreground border-0" : "text-destructive hover:text-destructive"}`}
+              >
+                Kan inte
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Child events for recurring activities */}
         {activity.is_recurring && childEvents.length > 0 && (
           <div className="bg-card rounded-2xl border border-border overflow-hidden animate-fade-in" style={{ animationDelay: "0.05s" }}>
@@ -390,10 +493,25 @@ const ActivityDetail = () => {
           <div className="p-5 border-b border-border flex items-center justify-between">
             <h3 className="font-semibold text-foreground">Deltagare ({activity.participants?.length ?? 0})</h3>
             {isOwner && (
-              <Button variant="outline" size="sm" onClick={() => setShowAddUser(!showAddUser)}>
-                <UserPlus className="h-3.5 w-3.5 mr-1.5" />
-                Lägg till
-              </Button>
+              <div className="flex items-center gap-2">
+                {!activity.is_recurring && (
+                  reminderCoolingDown ? (
+                    <Button variant="outline" size="sm" disabled className="text-success border-success/30">
+                      <Bell className="h-3.5 w-3.5 mr-1.5" />
+                      Påminnelse skickad ✓
+                    </Button>
+                  ) : (
+                    <Button variant="outline" size="sm" onClick={() => sendReminderMutation.mutate()} disabled={sendReminderMutation.isPending}>
+                      <Bell className="h-3.5 w-3.5 mr-1.5" />
+                      {sendReminderMutation.isPending ? "Skickar..." : "Påminn ej svarade"}
+                    </Button>
+                  )
+                )}
+                <Button variant="outline" size="sm" onClick={() => setShowAddUser(!showAddUser)}>
+                  <UserPlus className="h-3.5 w-3.5 mr-1.5" />
+                  Lägg till
+                </Button>
+              </div>
             )}
           </div>
 
