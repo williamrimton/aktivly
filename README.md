@@ -23,3 +23,11 @@ npm run build        # Production build
 npm run lint         # ESLint
 npm run test         # Run tests
 ```
+
+## Update databases:
+
+npx supabase link --project-ref sovuuhzyeyegzizqqoyi
+npx supabase db push
+
+npx supabase link --project-ref etggxmisotmbiokcnnvb
+npx supabase db push

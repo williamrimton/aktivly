@@ -28,7 +28,7 @@ const Dashboard = () => {
   });
   const [sendingId, setSendingId] = useState<string | null>(null);
 
-  const { data: activities = [], isLoading } = useQuery({
+  const { data: activities = [], isLoading, error: activitiesError } = useQuery({
     queryKey: ["activities", user?.id],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -42,24 +42,41 @@ const Dashboard = () => {
     enabled: !!user,
   });
 
-  const { data: participatedActivities = [], isLoading: isLoadingParticipated } = useQuery({
+  const { data: participatedActivities = [], isLoading: isLoadingParticipated, error: participatedError } = useQuery({
     queryKey: ["participated-activities", user?.id],
     queryFn: async () => {
-      // First get activity IDs where the user is a participant
-      const { data: participantRows, error: pError } = await supabase
-        .from("participants")
-        .select("activity_id")
-        .eq("user_id", user!.id);
-      if (pError) throw pError;
-      if (!participantRows || participantRows.length === 0) return [];
-      
-      const activityIds = participantRows.map(p => p.activity_id);
-      
-      // Fetch those activities (exclude ones the user owns)
+      const [byUserId, byEmail] = await Promise.all([
+        supabase
+          .from("participants")
+          .select("activity_id, id, user_id")
+          .eq("user_id", user!.id),
+        supabase
+          .from("participants")
+          .select("activity_id, id, user_id")
+          .ilike("email", user!.email!)
+          .is("user_id", null),
+      ]);
+      if (byUserId.error) throw byUserId.error;
+
+      // Auto-link email-only records
+      const emailRows = byEmail.data ?? [];
+      if (emailRows.length > 0) {
+        await supabase
+          .from("participants")
+          .update({ user_id: user!.id })
+          .in("id", emailRows.map(p => p.id));
+      }
+
+      const seen = new Set((byUserId.data ?? []).map(p => p.activity_id));
+      const emailActivityIds = emailRows.filter(p => !seen.has(p.activity_id)).map(p => p.activity_id);
+      const allActivityIds = [...(byUserId.data ?? []).map(p => p.activity_id), ...emailActivityIds];
+
+      if (allActivityIds.length === 0) return [];
+
       const { data, error } = await supabase
         .from("activities")
         .select("*, participants(id, status, name, user_id)")
-        .in("id", activityIds)
+        .in("id", allActivityIds)
         .order("date", { ascending: true });
       if (error) throw error;
       return data;
@@ -114,12 +131,20 @@ const Dashboard = () => {
           .select("*")
           .eq("activity_id", event.id);
         if (invitees && invitees.length > 0) {
+          const { data: profileMatches } = await supabase
+            .from("profiles")
+            .select("user_id, email")
+            .in("email", invitees.map((i: any) => i.email));
+          const profileMap: Record<string, string> = Object.fromEntries(
+            (profileMatches ?? []).map((p: any) => [p.email?.toLowerCase(), p.user_id])
+          );
           await supabase.from("participants").insert(
             invitees.map((inv: any) => ({
               activity_id: childId,
               name: inv.name,
               email: inv.email,
               status: "pending",
+              user_id: profileMap[inv.email?.toLowerCase()] ?? null,
             }))
           );
         }
@@ -210,12 +235,20 @@ const Dashboard = () => {
   const scheduledEvents = [...oneTimeActivities, ...childActivities];
 
   const ownedIds = new Set([...oneTimeActivities, ...childActivities].map(e => e.id));
-  const confirmedParticipated = participatedActivities
+
+  const findMyParticipant = (participants: any[]) =>
+    participants?.find((p: any) =>
+      p.user_id === user?.id ||
+      (!p.user_id && p.email?.toLowerCase() === user?.email?.toLowerCase())
+    );
+
+  const allParticipated = participatedActivities
     .filter((e: any) => !e.is_recurring && !ownedIds.has(e.id))
-    .filter((e: any) => e.participants?.find((p: any) => p.user_id === user?.id)?.status === "confirmed")
     .map((e: any) => ({ ...e, confirmed: e.participants?.filter((p: any) => p.status === "confirmed").length ?? 0, total: e.participants?.length ?? 0 }));
 
-  const filtered = [...oneTimeActivities, ...childActivities, ...confirmedParticipated].filter(e => {
+  const pendingParticipated = allParticipated.filter((e: any) => findMyParticipant(e.participants)?.status === "pending");
+
+  const filtered = [...oneTimeActivities, ...childActivities, ...allParticipated].filter(e => {
     if (filter === "full" && e.max_participants && e.confirmed < e.max_participants) return false;
     if (filter === "upcoming" && e.max_participants && e.confirmed >= e.max_participants) return false;
     return e.title.toLowerCase().includes(search.toLowerCase());
@@ -268,7 +301,7 @@ const Dashboard = () => {
     return null;
   }
 
-  const ActivityCard = ({ event, i }: { event: any; i: number }) => (
+  const ActivityCard = ({ event, i, myStatus }: { event: any; i: number; myStatus?: string }) => (
     <Link
       key={event.id}
       to={`/activity/${event.id}`}
@@ -280,7 +313,13 @@ const Dashboard = () => {
           <h3 className="font-semibold text-foreground group-hover:text-primary transition-colors">{event.title}</h3>
           <p className="text-xs text-muted-foreground mt-1">{event.location || "Ingen plats"}</p>
         </div>
-        <div className={`w-2 h-2 rounded-full mt-2 ${statusColor(event.confirmed, event.max_participants)}`} />
+        {myStatus ? (
+          <span className={`text-xs font-medium px-2.5 py-1 rounded-full whitespace-nowrap ${statusConfig[myStatus]?.className ?? "bg-warning/10 text-warning"}`}>
+            {statusConfig[myStatus]?.label ?? "Inväntar svar"}
+          </span>
+        ) : (
+          <div className={`w-2 h-2 rounded-full mt-2 ${statusColor(event.confirmed, event.max_participants)}`} />
+        )}
       </div>
       <div className="flex items-center gap-4 text-xs text-muted-foreground">
         <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{event.date}</span>
@@ -365,7 +404,7 @@ const Dashboard = () => {
             </TabsTrigger>
             <TabsTrigger value="invited">
               <UserCheck className="h-4 w-4 mr-1.5" />
-              Inbjuden till ({participatedActivities.filter((e: any) => !e.is_recurring).length})
+              Inbjuden till ({pendingParticipated.length})
             </TabsTrigger>
           </TabsList>
 
@@ -388,7 +427,12 @@ const Dashboard = () => {
               </div>
             </div>
 
-            {isLoading ? (
+            {activitiesError || participatedError ? (
+              <div className="text-center py-12 space-y-2">
+                <p className="text-destructive font-medium">Kunde inte ladda aktiviteter</p>
+                <p className="text-xs text-muted-foreground">{(activitiesError as any)?.message || (participatedError as any)?.message}</p>
+              </div>
+            ) : (isLoading || isLoadingParticipated) ? (
               <div className="text-center py-12 text-muted-foreground">Laddar...</div>
             ) : filtered.length === 0 ? (
               <div className="text-center py-16 space-y-4">
@@ -400,7 +444,10 @@ const Dashboard = () => {
               </div>
             ) : (
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filtered.map((event, i) => <ActivityCard key={event.id} event={event} i={i} />)}
+                {filtered.map((event, i) => {
+                  const myStatus = !ownedIds.has(event.id) ? findMyParticipant(event.participants)?.status : undefined;
+                  return <ActivityCard key={event.id} event={event} i={i} myStatus={myStatus} />;
+                })}
               </div>
             )}
           </TabsContent>
@@ -534,15 +581,15 @@ const Dashboard = () => {
           <TabsContent value="invited" className="space-y-6">
             {isLoadingParticipated ? (
               <div className="text-center py-12 text-muted-foreground">Laddar...</div>
-            ) : participatedActivities.filter((e: any) => !e.is_recurring).length === 0 ? (
+            ) : pendingParticipated.length === 0 ? (
               <div className="text-center py-16 space-y-4">
                 <UserCheck className="h-12 w-12 text-muted-foreground/30 mx-auto" />
-                <p className="text-muted-foreground">Du har inte blivit tillagd på några aktiviteter ännu</p>
+                <p className="text-muted-foreground">Inga obesvarade inbjudningar</p>
               </div>
             ) : (
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {participatedActivities.filter((event: any) => !event.is_recurring).map((event: any, i: number) => {
-                  const myParticipant = event.participants?.find((p: any) => p.user_id === user?.id);
+                {pendingParticipated.map((event: any, i: number) => {
+                  const myParticipant = findMyParticipant(event.participants);
                   const confirmedCount = event.participants?.filter((p: any) => p.status === "confirmed").length ?? 0;
                   const enrichedEvent = { ...event, confirmed: confirmedCount, total: event.participants?.length ?? 0 };
                   return (

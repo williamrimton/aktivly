@@ -11,14 +11,25 @@ const MyBookings = () => {
   const { data: bookings = [], isLoading } = useQuery({
     queryKey: ["my-bookings", user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("participants")
-        .select("*, activities!inner(*)")
-        .eq("user_id", user!.id)
-        .eq("activities.is_recurring", false)
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data;
+      const [byId, byEmail] = await Promise.all([
+        supabase
+          .from("participants")
+          .select("*, activities!inner(*)")
+          .eq("user_id", user!.id)
+          .eq("activities.is_recurring", false)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("participants")
+          .select("*, activities!inner(*)")
+          .ilike("email", user!.email)
+          .is("user_id", null)
+          .eq("activities.is_recurring", false)
+          .order("created_at", { ascending: false }),
+      ]);
+      if (byId.error) throw byId.error;
+      const seen = new Set((byId.data ?? []).map((b: any) => b.activity_id));
+      const emailOnly = (byEmail.data ?? []).filter((b: any) => !seen.has(b.activity_id));
+      return [...(byId.data ?? []), ...emailOnly];
     },
     enabled: !!user,
   });

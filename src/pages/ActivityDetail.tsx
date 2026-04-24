@@ -258,6 +258,23 @@ const ActivityDetail = () => {
     }
   }, [activity?.id]);
 
+  useEffect(() => {
+    if (!activity || !user) return;
+    const emailOnly = activity.participants?.find(
+      (p: any) => !p.user_id && p.email?.toLowerCase() === user.email?.toLowerCase()
+    );
+    if (emailOnly) {
+      supabase
+        .from("participants")
+        .update({ user_id: user.id })
+        .eq("id", emailOnly.id)
+        .then(() => {
+          queryClient.invalidateQueries({ queryKey: ["activity", id] });
+          queryClient.invalidateQueries({ queryKey: ["participated-activities", user.id] });
+        });
+    }
+  }, [activity?.id, user?.id]);
+
   const startEditing = () => {
     if (!activity) return;
     setEditForm({
