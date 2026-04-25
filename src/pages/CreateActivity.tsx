@@ -13,7 +13,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 interface SelectedUser {
-  user_id: string;
+  user_id: string | null;
   display_name: string;
   email: string | null;
 }
@@ -54,17 +54,14 @@ const CreateActivity = () => {
         .ilike("email", email)
         .maybeSingle();
       if (error) throw error;
-      if (!data) {
-        setEmailError("Ingen användare hittades med den e-postadressen");
-        return;
-      }
       setSelectedUsers(prev => [...prev, {
-        user_id: data.user_id,
-        display_name: data.display_name || data.email || "Anonym",
-        email: data.email,
+        user_id: data?.user_id ?? null,
+        display_name: data?.display_name || data?.email || email,
+        email: data?.email ?? email,
       }]);
       setEmailInput("");
-    } catch {
+    } catch (err) {
+      console.error("Participant search error:", err);
       setEmailError("Något gick fel vid sökning");
     } finally {
       setEmailLoading(false);

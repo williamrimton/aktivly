@@ -93,13 +93,12 @@ const ActivityDetail = () => {
         .ilike("email", email)
         .maybeSingle();
       if (error) throw error;
-      if (!data) {
-        setEmailError("Ingen användare hittades med den e-postadressen");
-        return;
-      }
-      addParticipantMutation.mutate(data);
+      addParticipantMutation.mutate(
+        data ?? { user_id: null, display_name: null, email }
+      );
       setEmailInput("");
-    } catch {
+    } catch (err) {
+      console.error("Participant search error:", err);
       setEmailError("Något gick fel vid sökning");
     } finally {
       setEmailLoading(false);
@@ -130,7 +129,7 @@ const ActivityDetail = () => {
   });
 
   const addParticipantMutation = useMutation({
-    mutationFn: async (profile: { user_id: string; display_name: string | null; email: string | null }) => {
+    mutationFn: async (profile: { user_id: string | null; display_name: string | null; email: string | null }) => {
       const name = profile.display_name || profile.email || "Anonym";
       // Add to this activity
       const { error } = await supabase.from("participants").insert({
@@ -150,11 +149,16 @@ const ActivityDetail = () => {
           .eq("parent_activity_id", id!);
         if (children && children.length > 0) {
           // Check which child events already have this participant
-          const { data: existingParticipants } = await supabase
+          const dupQuery = supabase
             .from("participants")
             .select("activity_id")
-            .eq("user_id", profile.user_id)
             .in("activity_id", children.map(c => c.id));
+          if (profile.user_id) {
+            dupQuery.eq("user_id", profile.user_id);
+          } else {
+            dupQuery.eq("email", profile.email!).is("user_id", null);
+          }
+          const { data: existingParticipants } = await dupQuery;
           const existingIds = new Set(existingParticipants?.map(p => p.activity_id) ?? []);
           const toInsert = children
             .filter(c => !existingIds.has(c.id))
