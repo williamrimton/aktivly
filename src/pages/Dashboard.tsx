@@ -22,7 +22,7 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<"all" | "upcoming" | "full">("all");
+  const [filter, setFilter] = useState<"all" | "accepted" | "full">("all");
   const [inviteSentAt, setInviteSentAt] = useState<Record<string, number>>(() => {
     try { return JSON.parse(localStorage.getItem("inv_sent") || "{}"); } catch { return {}; }
   });
@@ -33,7 +33,7 @@ const Dashboard = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("activities")
-        .select("*, participants(id, status)")
+        .select("*, participants(id, status, user_id, email)")
         .eq("user_id", user!.id)
         .order("date", { ascending: true });
       if (error) throw error;
@@ -250,7 +250,10 @@ const Dashboard = () => {
 
   const filtered = [...oneTimeActivities, ...childActivities, ...allParticipated].filter(e => {
     if (filter === "full" && e.max_participants && e.confirmed < e.max_participants) return false;
-    if (filter === "upcoming" && e.max_participants && e.confirmed >= e.max_participants) return false;
+    if (filter === "accepted") {
+      const myStatus = findMyParticipant(e.participants)?.status;
+      if (myStatus !== "confirmed" && myStatus !== "maybe") return false;
+    }
     return e.title.toLowerCase().includes(search.toLowerCase());
   });
 
@@ -301,7 +304,7 @@ const Dashboard = () => {
     return null;
   }
 
-  const ActivityCard = ({ event, i, myStatus }: { event: any; i: number; myStatus?: string }) => (
+  const ActivityCard = ({ event, i, isOwner, myStatus }: { event: any; i: number; isOwner?: boolean; myStatus?: string }) => (
     <Link
       key={event.id}
       to={`/activity/${event.id}`}
@@ -313,13 +316,20 @@ const Dashboard = () => {
           <h3 className="font-semibold text-foreground group-hover:text-primary transition-colors">{event.title}</h3>
           <p className="text-xs text-muted-foreground mt-1">{event.location || "Ingen plats"}</p>
         </div>
-        {myStatus ? (
-          <span className={`text-xs font-medium px-2.5 py-1 rounded-full whitespace-nowrap ${statusConfig[myStatus]?.className ?? "bg-warning/10 text-warning"}`}>
-            {statusConfig[myStatus]?.label ?? "Inväntar svar"}
-          </span>
-        ) : (
-          <div className={`w-2 h-2 rounded-full mt-2 ${statusColor(event.confirmed, event.max_participants)}`} />
-        )}
+        <div className="flex flex-col items-end gap-1">
+          {isOwner && (
+            <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-primary/10 text-primary whitespace-nowrap">
+              Arrangör
+            </span>
+          )}
+          {myStatus ? (
+            <span className={`text-xs font-medium px-2.5 py-1 rounded-full whitespace-nowrap ${statusConfig[myStatus]?.className ?? "bg-warning/10 text-warning"}`}>
+              {statusConfig[myStatus]?.label ?? "Inväntar svar"}
+            </span>
+          ) : !isOwner && (
+            <div className={`w-2 h-2 rounded-full mt-2 ${statusColor(event.confirmed, event.max_participants)}`} />
+          )}
+        </div>
       </div>
       <div className="flex items-center gap-4 text-xs text-muted-foreground">
         <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{event.date}</span>
@@ -350,9 +360,6 @@ const Dashboard = () => {
             <span className="font-semibold text-foreground hidden sm:inline">Aktivly</span>
           </Link>
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" className="text-muted-foreground" asChild>
-              <Link to="/my-bookings">Mina bokningar</Link>
-            </Button>
             <Button variant="ghost" size="sm" className="text-muted-foreground" asChild>
               <Link to="/profile">Min profil</Link>
             </Button>
@@ -415,13 +422,13 @@ const Dashboard = () => {
                 <Input placeholder="Sök aktiviteter..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9 h-10 bg-card" />
               </div>
               <div className="flex gap-2">
-                {(["all", "upcoming", "full"] as const).map(f => (
+                {(["all", "accepted", "full"] as const).map(f => (
                   <Button key={f} variant={filter === f ? "default" : "outline"} size="sm"
                     className={filter === f ? "gradient-primary text-primary-foreground border-0" : ""}
                     onClick={() => setFilter(f)}
                   >
                     <Filter className="h-3 w-3 mr-1.5" />
-                    {f === "all" ? "Alla" : f === "upcoming" ? "Kommande" : "Fullbokade"}
+                    {f === "all" ? "Alla" : f === "accepted" ? "Accepterade" : "Fullbokade"}
                   </Button>
                 ))}
               </div>
@@ -445,8 +452,9 @@ const Dashboard = () => {
             ) : (
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filtered.map((event, i) => {
-                  const myStatus = !ownedIds.has(event.id) ? findMyParticipant(event.participants)?.status : undefined;
-                  return <ActivityCard key={event.id} event={event} i={i} myStatus={myStatus} />;
+                  const isOwner = ownedIds.has(event.id);
+                  const myStatus = findMyParticipant(event.participants)?.status;
+                  return <ActivityCard key={event.id} event={event} i={i} isOwner={isOwner} myStatus={myStatus} />;
                 })}
               </div>
             )}
@@ -493,7 +501,6 @@ const Dashboard = () => {
                           </div>
                           <p className="text-xs text-muted-foreground mt-1">{event.location || "Ingen plats"}</p>
                         </div>
-                        <div className={`w-2 h-2 rounded-full mt-2 ${statusColor(event.confirmed, event.max_participants)}`} />
                       </div>
 
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">

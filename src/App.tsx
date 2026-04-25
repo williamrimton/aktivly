@@ -11,7 +11,6 @@ import Signup from "./pages/Signup.tsx";
 import Dashboard from "./pages/Dashboard.tsx";
 import CreateActivity from "./pages/CreateActivity.tsx";
 import ActivityDetail from "./pages/ActivityDetail.tsx";
-import MyBookings from "./pages/MyBookings.tsx";
 import ParticipantBooking from "./pages/ParticipantBooking.tsx";
 import Profile from "./pages/Profile.tsx";
 import ConfirmEmail from "./pages/ConfirmEmail.tsx";
@@ -35,7 +34,6 @@ const App = () => (
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/create" element={<CreateActivity />} />
             <Route path="/activity/:id" element={<ActivityDetail />} />
-            <Route path="/my-bookings" element={<MyBookings />} />
             <Route path="/booking/:id" element={<ParticipantBooking />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="*" element={<NotFound />} />
