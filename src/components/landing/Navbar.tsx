@@ -3,8 +3,9 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Menu, X, LogOut, LayoutDashboard } from "lucide-react";
+import { Menu, X, LogOut, LayoutDashboard, Sun, Moon } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { useDarkMode } from "@/hooks/useDarkMode";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import aktivlyIcon from "@/assets/aktivlySVG.svg";
@@ -12,6 +13,7 @@ import aktivlyIcon from "@/assets/aktivlySVG.svg";
 const Navbar = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { user, signOut } = useAuth();
+  const { dark, toggle: toggleDark } = useDarkMode();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -55,6 +57,13 @@ const Navbar = () => {
         </div>
 
         <div className="hidden md:flex items-center gap-3">
+          <button
+            onClick={toggleDark}
+            aria-label={dark ? "Byt till ljust läge" : "Byt till mörkt läge"}
+            className="rounded-full p-2 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+          >
+            {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </button>
           {user ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -88,9 +97,18 @@ const Navbar = () => {
           )}
         </div>
 
-        <button className="md:hidden" onClick={() => setMobileOpen(!mobileOpen)}>
-          {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-        </button>
+        <div className="md:hidden flex items-center gap-1">
+          <button
+            onClick={toggleDark}
+            aria-label={dark ? "Byt till ljust läge" : "Byt till mörkt läge"}
+            className="rounded-full p-2 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+          >
+            {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </button>
+          <button onClick={() => setMobileOpen(!mobileOpen)}>
+            {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
+        </div>
       </div>
 
       {mobileOpen && (

@@ -91,6 +91,7 @@
     --sidebar-ring: 214 74% 55%;
     --surface: 224 50% 8%;
     --surface-hover: 224 50% 12%;
+    --gradient-hero: linear-gradient(135deg, hsl(214 50% 8%), hsl(224 50% 7%), hsl(220 40% 9%));
   }
 }
 
